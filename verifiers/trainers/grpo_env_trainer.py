@@ -1,29 +1,31 @@
 import warnings
-from typing import Callable, Optional, Union, Any, List
+from typing import Any, Callable, List, Optional, Union
 
+import torch
+
+# monkey patch vllm client
+import trl.extras.vllm_client
 from accelerate.utils import broadcast_object_list, gather, gather_object
 from datasets import Dataset, IterableDataset
-from peft import PeftConfig # type: ignore
-import torch
+from peft import PeftConfig  # type: ignore
 from torch import nn
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
     Trainer,
     TrainerCallback,
-    is_wandb_available
+    is_wandb_available,
 )
+
 from verifiers import RewardFunc
 from verifiers.envs.environment import Environment
-from verifiers.utils.logging_utils import print_prompt_completions_sample
 from verifiers.imports import LLM, SamplingParams
 from verifiers.inference.vllm_client import VLLMClient
+from verifiers.utils.logging_utils import print_prompt_completions_sample
 
-# monkey patch vllm client
-import trl.extras.vllm_client
 trl.extras.vllm_client.VLLMClient = VLLMClient
 
-from trl import GRPOTrainer, GRPOConfig
+from trl import GRPOConfig, GRPOTrainer
 from trl.data_utils import maybe_apply_chat_template
 from trl.import_utils import is_rich_available
 from trl.trainer.utils import pad
@@ -208,6 +210,9 @@ class GRPOEnvTrainer(GRPOTrainer):
 
         # Apply weights to each reward function's output and sum
         rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
+        
+        # Clamp the rewards to be between 0 and 1 so 
+        rewards = rewards.clamp(0, 1)
 
         # Compute grouped-wise rewards
         mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1) # type: ignore
